@@ -490,8 +490,8 @@ def test_numeric_example():
     gamma4 = 10.164
     SR0    = 0
     SR1    = .5
-    p_H1   = .05
-    alpha  = .05
+    p_H1   = .10
+    alpha  = .10
 
     SR = mu / sigma
     print( f"μ                      = {mu:.3f}" )
@@ -504,7 +504,8 @@ def test_numeric_example():
     print( f"σ_SR                   = {sqrt( sharpe_ratio_variance( SR = mu / sigma, gamma3 = 0,      gamma4 = 3,      T = T ) ):.3f} (Gaussian)" )
     print( f"MinTRL                 = {minimum_track_record_length( SR = mu / sigma, SR0 = 0, gamma3 = gamma3, gamma4 = gamma4, alpha = alpha ):.3f}" )
     print( f"MinTRL(SR0=.1)         = {minimum_track_record_length( SR = mu / sigma, SR0 = .1, gamma3 = gamma3, gamma4 = gamma4, alpha = alpha ):.3f}" )
-    print( f"PSR(SR0=0)             = {probabilistic_sharpe_ratio( SR = mu / sigma, SR0 = 0,  T = T, gamma3 = gamma3, gamma4 = gamma4):.3f}" )
+    print( f"p = 1 - PSR(SR0=0)     = {1-probabilistic_sharpe_ratio( SR = mu / sigma, SR0 = 0,  T = T, gamma3 = gamma3, gamma4 = gamma4):.3f}" )
+    print( f"PSR(SR0=0)             = {  probabilistic_sharpe_ratio( SR = mu / sigma, SR0 = 0,  T = T, gamma3 = gamma3, gamma4 = gamma4):.3f}" )
     print( f"PSR(SR0=.1)            = {probabilistic_sharpe_ratio( SR = mu / sigma, SR0 = .1, T = T, gamma3 = gamma3, gamma4 = gamma4):.3f}" )
     print( f"SR0                    = {SR0:.3f}" )
     print( f"SR_c                   = {critical_sharpe_ratio(SR0, T, gamma3=0.,     gamma4=3.,     alpha=alpha):.3f} (Gaussian)" )
@@ -533,7 +534,6 @@ def test_numeric_example():
 
     print( "\nFDR" )
     q    = .25
-    p_H1 = .10  # Was 5% in the previous examples
     alpha_, beta_, SR_c = control_for_FDR( q, SR0 = SR0, SR1 = SR1, p_H1 = p_H1, T = T, gamma3 = gamma3, gamma4 = gamma4 )
     print( f"P[H1]                  = {p_H1:.3f}" )
     print( f"q                      = {q:.3f}" )
