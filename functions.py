@@ -20,6 +20,8 @@ def round_p_value(p: float) -> str:
     """
     Round a p-value to 2 decimal places if above 0.01, 3 if above 0.001, and zero if below.
     """
+    if p == 0: 
+        return "0"
     if p > .01:
         return f"{p:.2f}"
     if p > .001:
