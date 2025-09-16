@@ -1,3 +1,4 @@
+from deprecated import deprecated
 from math import sqrt
 import math
 import scipy.stats
@@ -29,9 +30,20 @@ def round_p_value(p: float) -> str:
     return f"10^{int(math.log10(p))}"
 
 
-def effective_rank(C):
+def effective_rank(C: np.ndarray) -> float:
     """
     Effective rank of a correlation matrix.
+
+    The effective rank of a positive semi-definite matrix is computed as follows: 
+    - Compute the eigenvalues; they are non-negative
+    - Discard zeros
+    - Normalize the remaining eigenvalues to sum to 1, so we can interpret them as a probability distribution
+    - Compute its entropy
+    - "Invert" the entropy to have an effective number of items 
+      (the number of items for which the uniform distribution would have the same entropy)
+
+    Input:  C: np.ndarray, square, a positive semi-definite matrix
+    Output: float, effective rank
 
     [1] The effective rank: a measure of effective dimensionality
         O. Roy and M. Vetterli (2007)
@@ -57,6 +69,7 @@ def test_effective_rank():
 
 def number_of_clusters(
         C: np.ndarray,
+        *,
         retries: int = 10,
         max_clusters: int = 100,
         plot: bool = False,
@@ -64,11 +77,27 @@ def number_of_clusters(
     """
     Compute the optimal number of clusters, from a correlation matrix
 
-    Algorithm in section 8.1 of [1], without the third point (i.e., no recursive re-clustering of low-quality clusters)
+    Algorithm in section 8.1 of [1], without the third point (i.e., no recursive re-clustering of low-quality clusters): 
+    - Convert the correlation matrix into a distance matrix
+    - Using the columns of the distance matrix as features, run the k-means algorithm, for all k, 
+      and compute the "quality" of the clustering
+    - Keep the clustering with the highest quality
+    The quality is computed as the mean of the silhouette scores, divided by their standard deviation.
 
+    References: 
     [1] Detection of false investment strategies using unsupervised learning methods
         M. Lopez de Prado (2018)
         https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3167017
+
+    Inputs: 
+    - C: np.ndarray, square, a correlation matrix (symmetric, positive semi-definite, with ones on the diagonal)
+    - retries: int, number of times to run the k-means algorithm
+    - max_clusters: int, maximum number of clusters to consider
+    - plot: bool, whether to plot the quality of the clustering
+    Outputs:
+    - number_of_clusters: int, the optimal number of clusters
+    - qualities: pd.Series, quality of the clusterings, indexed by the number of clusters
+    - clusters: np.ndarray, cluster assignment for each observation, for the optimal number of clusters
     """
 
     # Check this looks like a correlation matrix
@@ -95,7 +124,7 @@ def number_of_clusters(
         qualities[k] = - np.inf
         for _ in range(retries):
             kmeans = KMeans(n_clusters=k)
-            kmeans.fit(D)
+            kmeans.fit(D)  # Use the distances as features, i.e., compute distances between columns of the distance matrix
             labels = kmeans.labels_
             silhouette_vals = silhouette_samples(D, labels)
             q = silhouette_vals.mean() / silhouette_vals.std()
@@ -121,15 +150,23 @@ def number_of_clusters(
 
 
 def get_random_correlation_matrix(
-    number_of_trials = 100,
-    effective_number_of_trials = 10,
-    number_of_observations = 200,
-    noise = .1,
+    number_of_trials: int = 100,
+    effective_number_of_trials: int = 10,
+    number_of_observations: int = 200,
+    noise: float = .1,
 ):
     """
     Generate a correlation matrix with a block structure
 
-    Returns the correlation matrix, the return matrix, and the cluster labels.
+    Inputs: 
+    - number_of_trials: int, number of time series to generate; size of the correlation matrix
+    - effective_number_of_trials: int, number of clusters
+    - number_of_observations: int, number of observations to generate
+    - noise: float, noise level
+    Outputs:
+    - C: np.ndarray, square, a correlation matrix
+    - X: np.ndarray, matrix of observations, with number_of_observations rows and number_of_trials columns
+    - clusters: np.ndarray, cluster assignment for each trial (column)
     """
     while True:
         block_positions = [0] + sorted( np.random.choice( number_of_trials, effective_number_of_trials-1, replace = True ) ) + [number_of_trials]
@@ -152,14 +189,33 @@ def get_random_correlation_matrix(
     return C, X, clusters
 
 
-def generate_non_gaussian_data( nr, nc, *, SR0 = 0, name = 'severe', seed = None ):
+def generate_non_gaussian_data( 
+    nr: int, 
+    nc: int, 
+    *, 
+    SR0: float = 0, 
+    name: str = 'severe', 
+    seed: int = None,
+) -> np.ndarray:
+    """
+    Generate non-Gaussian data
 
+    Inputs:
+    - nr: int, number of rows
+    - nc: int, number of columns
+    - SR0: float, the target Sharpe ratio
+    - name: str, distribution (gaussian, mild, moderate, severe)
+    - seed: int, seed for the random number generator
+    Outputs:
+    - X: np.ndarray, matrix of observations, shape (nr, nc)
+    """
     configs = {
         "gaussian": (0,    0,     0.015, 0.010),
         "mild":     (0.04, -0.03, 0.015, 0.010),
         "moderate": (0.03, -0.045, 0.020, 0.010),
         "severe":   (0.02, -0.060, 0.025, 0.010),
     }
+    assert name in configs
 
     def mixture_variance(p_tail, mu_tail, sigma_tail, mu_core, sigma_core):
         w = 1.0 - p_tail
@@ -182,9 +238,22 @@ def generate_non_gaussian_data( nr, nc, *, SR0 = 0, name = 'severe', seed = None
     return gen_with_true_SR0( nr, nc, configs[name], SR0, seed )
 
 
-def sharpe_ratio_variance( SR, T, *, gamma3=0., gamma4=3. ):
+def sharpe_ratio_variance( 
+    SR: float, 
+    T: int, *, 
+    gamma3: float = 0., 
+    gamma4: float = 3.,
+) -> float:
     """
     Asymptotic variance of the Sharpe ratio
+
+    Inputs:
+    - SR: float, Sharpe ratio
+    - T: int, number of observations
+    - gamma3: float, skewness
+    - gamma4: float, (non-excess) kurtosis
+    Outputs:
+    - float, the variance of the Sharpe ratio
     """
     return ( 1 - gamma3 * SR + (gamma4-1)/4 * SR**2 ) / T
 
@@ -193,9 +262,25 @@ def test_sharpe_ratio_variance():
     assert round( sqrt( sharpe_ratio_variance( SR = .036 / .079, gamma3 = 0,      gamma4 = 3,      T = 24 ) ), 3 ) == .214
 
 
-def minimum_track_record_length( SR, SR0, *, gamma3=0., gamma4=3., alpha=0.05 ):
+def minimum_track_record_length( 
+    SR: float, 
+    SR0: float, 
+    *, 
+    gamma3: float = 0., 
+    gamma4: float = 3., 
+    alpha: float = 0.05,
+) -> float:
     """
     Minimum track record length for the Sharpe ratio to be significantly greater than SR0, at the confidence level alpha.
+
+    Inputs:
+    - SR: float, observed Sharpe ratio
+    - SR0: float, Sharpe ratio under H0
+    - gamma3: float, skewness
+    - gamma4: float, (non-excess) kurtosis
+    - alpha: float, confidence level
+    Outputs:
+    - float, minimum track record length
     """
     return ( 1 - gamma3 * SR0 + (gamma4-1)/4*SR0**2 ) * ( norm.ppf(1-alpha) / (SR - SR0) ) ** 2
 
@@ -203,9 +288,28 @@ def test_minimum_track_record_length():
     assert round( minimum_track_record_length( SR = .036 / .079, SR0 = 0, gamma3 = -2.448, gamma4 = 10.164, alpha = .05 ), 3 ) == 13.029
 
 
-def probabilistic_sharpe_ratio( SR, SR0, T, *, gamma3=0., gamma4=3. ):
+def probabilistic_sharpe_ratio( 
+    SR: float, 
+    SR0: float, 
+    T: int, 
+    *, 
+    gamma3: float = 0., 
+    gamma4: float = 3.,
+) -> float:
     """
+    Probabilistic Sharpe Ratio (PSR)
+
     This is 1-p, where p is the p-value of the test  H0: SR=SR0  vs  H1: SR>SR0.
+    It can be interpreted as a Sharpe ratio "on a probability scale", i.e., in [0,1].
+
+    Inputs: 
+    - SR: float, observed Sharpe ratio
+    - SR0: float, Sharpe ratio under H0
+    - T: int, number of observations
+    - gamma3: float, skewness
+    - gamma4: float, (non-excess) kurtosis
+    Outputs:
+    - float, probabilistic Sharpe ratio
     """
     variance = sharpe_ratio_variance( SR0, T, gamma3 = gamma3, gamma4 = gamma4 )
     return norm.cdf( (SR - SR0) / sqrt(variance) )
@@ -215,23 +319,60 @@ def test_probabilistic_sharpe_ratio():
     assert round( probabilistic_sharpe_ratio( SR = .036 / .079, SR0 = .1, T = 24, gamma3 = -2.448, gamma4 = 10.164), 3 ) == .939
 
 
-def critical_sharpe_ratio(SR0, T, *, gamma3=0., gamma4=3., alpha=0.05):
+def critical_sharpe_ratio(
+    SR0: float, 
+    T: int, 
+    *, 
+    gamma3: float = 0., 
+    gamma4: float = 3., 
+    alpha: float = 0.05,
+) -> float:
     """
     Critical value for the test  H0: SR=SR0  vs  H1: SR>SR0.
+
+    Inputs:
+    - SR0: float, Sharpe ratio under H0
+    - T: int, number of observations
+    - gamma3: float, skewness
+    - gamma4: float, (non-excess) kurtosis
+    - alpha: float, confidence level
+    Outputs:
+    - float, critical value
     """
     variance = sharpe_ratio_variance(SR0, T, gamma3=gamma3, gamma4=gamma4)
     return SR0 + norm.ppf(1 - alpha) * sqrt(variance)
 
 
-def sharpe_ratio_power( SR0, SR1, T, *, gamma3=0., gamma4=3., alpha=0.05):  # Needs SR1, e.g., average Sharpe ratio of strategies with positive excess returns
+def sharpe_ratio_power( 
+    SR0: float, 
+    SR1: float, 
+    T: int, 
+    *, 
+    gamma3: float = 0., 
+    gamma4: float = 3., 
+    alpha: float = 0.05,
+) -> float:
     """
     Power (1-β) of the test  H0: SR=SR0  vs  H1: SR=SR1.
 
-    Note that "power" is the same thing as "recall" in classification:
-      Power = P[ reject H0 | H1 ]
-            = P[ H1 ∧ reject H0 | H1 ]
-            = TP / (TP + FN )
-            = recall
+    Remarks: 
+    - To compute the power, we need to know more about the alternative hypothesis: 
+      SR1 could be the average Sharpe ratio of strategies with positive excess returns
+    - "Power" is the same thing as "recall" in classification:
+            Power = P[ reject H0 | H1 ]
+                  = P[ H1 ∧ reject H0 | H1 ]
+                  = TP / (TP + FN )
+                  = recall
+
+    Inputs:
+    - SR0: float, Sharpe ratio under H0
+    - SR1: float, Sharpe ratio under H1
+    - T: int, number of observations
+    - gamma3: float, skewness
+    - gamma4: float, (non-excess) kurtosis
+    - alpha: float, confidence level
+    Outputs:
+    - float, power
     """
     critical_SR = critical_sharpe_ratio(SR0, T, gamma3=gamma3, gamma4=gamma4, alpha=alpha)
     variance = sharpe_ratio_variance(SR1, T, gamma3=gamma3, gamma4=gamma4)
@@ -242,29 +383,84 @@ def test_sharpe_ratio_power():
     assert round( 1 - sharpe_ratio_power( SR0=0, SR1 = .5, T = 24, gamma3 = -2.448, gamma4 = 10.164 ), 3 ) == .315
 
 
-def bayesian_fdr( p_H1, alpha, beta ):  # Needs beta=1-power (which needs, SR1), and p_H1, the proportion of deployed profitable strategies
+def pFDR( 
+    p_H1: float, 
+    alpha: float, 
+    beta: float,
+) -> float:
+    """
+    Posterior probability of H0, given that SR>SR_c
+
+    Remarks: 
+    - Needs beta=1-power (which needs, SR1), and p[H1], perhaps estimated as the proportion of deployed profitable strategies
+    - This does not use the observed Sharpe ratio, only the critical value for the test at level alpha; see oFDR
+
+    Inputs:
+    - p_H1: float, probability that H1 is true
+    - alpha: float, confidence level
+    - beta: float, 1 - power, i.e., type II error, i.e., the probability of not rejecting H0 when H1 is true
+    Outputs:
+    - float, posterior probability of H0
+    """
     p_H0 = 1 - p_H1
     return 1 / ( 1 + (1-beta) * p_H1 / alpha / p_H0 )
 
-def test_bayesian_fdr():
-    assert round( bayesian_fdr( .05, .05, .315 ), 3 ) == .581
+@deprecated(reason="This was renamed to pFDR")
+def bayesian_fdr( *args, **kwargs ):
+    return pFDR( *args, **kwargs )
+
+def test_pFDR():
+    assert round( pFDR( .05, .05, .315 ), 3 ) == .581
 
 
-def posterior_p_value( SR, SR0, SR1, T, p_H1, *, gamma3=0., gamma4=3.):
+def oFDR( 
+    SR: float, 
+    SR0: float,
+    SR1: float, 
+    T: int, 
+    p_H1: float, 
+    *, 
+    gamma3: float = 0., 
+    gamma4: float = 3.,
+) -> float:
+    """
+    Posterior probability of H0, given that SR>SR_obs
+
+    Inputs:
+    - SR: float, observed Sharpe ratio
+    - SR0: float, Sharpe ratio under H0
+    - SR1: float, Sharpe ratio under H1
+    - T: int, number of observations
+    - p_H1: float, probability that H1 is true
+    - gamma3: float, skewness
+    - gamma4: float, (non-excess) kurtosis
+    Outputs:
+    - float, posterior probability of H0
+    """
     p0 = 1 - probabilistic_sharpe_ratio( SR, SR0, T, gamma3=gamma3, gamma4=gamma4 )
     p1 = 1 - probabilistic_sharpe_ratio( SR, SR1, T, gamma3=gamma3, gamma4=gamma4 )
     p_H0 = 1 - p_H1
     return p0 * p_H0 / ( p0 * p_H0 + p1 * p_H1 )
 
-def test_posterior_p_value():
-    assert round( posterior_p_value( SR = .036 / .079, SR0=0, SR1=.5, T=24, p_H1=.05, gamma3 = -2.448, gamma4 = 10.164 ), 3 ) == .306
+@deprecated(reason="This was renamed to oFDR")
+def posterior_p_value( *args, **kwargs ):
+    return oFDR( *args, **kwargs )
+
+def test_oFDR():
+    assert round( oFDR( SR = .036 / .079, SR0=0, SR1=.5, T=24, p_H1=.05, gamma3 = -2.448, gamma4 = 10.164 ), 3 ) == .306
 
 
-def robust_covariance_inverse( V ):
+def robust_covariance_inverse( V: np.ndarray ) -> np.ndarray:
     r"""
-    Sherman–Morrison formula
+    Inverse of a constant-correlation covariance matrix, using the Sherman–Morrison formula
+
     Assume $V = \rho \sigma \sigma' + (1-\rho) \text{diag}(\sigma^2)$ (variance matrix, with constant correlations).
     Its inverse is $V^{-1} = A^{-1} - \dfrac{ A^{01} \rho \sigma \sigma' A^{-1} }{ 1 + \rho \sigma' A^{-1} \sigma }$.
+
+    Input:
+    - V: np.ndarray, variance matrix
+    Output:
+    - np.ndarray, inverse of the variance matrix
     """
     sigma = np.sqrt( np.diag(V) )
     C = (V.T/sigma).T/sigma
@@ -283,7 +479,15 @@ def test_robust_covariance_inverse():
     assert np.all( np.abs( np.linalg.inv(V) - robust_covariance_inverse(V) ) < 1e-12 )
 
 
-def minimum_variance_weights_for_correlated_assets(V):
+def minimum_variance_weights_for_correlated_assets(V: np.ndarray) -> np.ndarray:
+    """
+    Weights of the minimum variance portfolio, for correlated assets, assuming a constant-correlation covariance matrix
+
+    Input:
+    - V: np.ndarray, variance matrix, shape (n,n)
+    Output:
+    - np.ndarray, weights of the minimum variance portfolio, shape (n,)
+    """
     ones = np.ones( shape = V.shape[0] )
     S = robust_covariance_inverse(V)
     w = S @ ones
@@ -309,11 +513,15 @@ def test_minimum_variance_weights_for_correlated_assets():
     assert np.all( np.abs( W.value - w ) < 1e-10 )
 
 
-def variance_of_the_clustered_trials(X, clusters):
+def variance_of_the_clustered_trials(X: np.ndarray, clusters: np.ndarray) -> tuple[float, np.ndarray, pd.DataFrame]:
     """
+    Compute the returns of a minimum variance portfolio in each cluster, 
+    the corresponding Sharpe ratios, 
+    and then the variance of those Sharpe ratios.
+
     Inputs:
     - X: numpy array or returns, one column per strategy
-    - cluster: cluster assignment, list (or array) with one element per startegy
+    - cluster: cluster assignment, list (or array) with one element per strategy
     Outputs:
     - the variance of the Sharpe ratios fo the cluster portfolios
     - The Sharpe ratios of the cluster portfolios
@@ -339,7 +547,16 @@ def variance_of_the_clustered_trials(X, clusters):
     return SRs.var(), SRs, y
 
 
-def expected_maximum_sharpe_ratio( number_of_trials, variance ):
+def expected_maximum_sharpe_ratio( number_of_trials: int, variance: float ) -> float:
+    """
+    Expected maximum Sharpe ratio
+
+    Inputs:
+    - number_of_trials: int, number of trials
+    - variance: float, variance of the Sharpe ratios
+    Outputs:
+    - float, expected maximum Sharpe ratio
+    """
     return (
         sqrt( variance ) * (
             ( 1 - np.euler_gamma ) * norm.ppf( 1 - 1 / number_of_trials ) +
@@ -347,7 +564,8 @@ def expected_maximum_sharpe_ratio( number_of_trials, variance ):
         )
     )
 
-def deflated_sharpe_ratio(X, *, verbose = False, cluster = True, details = False):
+@deprecated(reason="Not used")
+def deflated_sharpe_ratio(X: np.ndarray, *, verbose: bool = False, cluster: bool = True, details: bool = False) -> float:
     gamma3 = scipy.stats.skew(X.flatten())                    # Skewness
     gamma4 = scipy.stats.kurtosis(X.flatten(), fisher=False)  # Kurtosis (not excess kurtosis)
     T = X.shape[0]
@@ -429,15 +647,40 @@ def deflated_sharpe_ratio(X, *, verbose = False, cluster = True, details = False
     return DSR
 
 
-def adjusted_p_values_bonferroni(ps):
-    M = len(ps)
+def adjusted_p_values_bonferroni(ps: np.ndarray) -> np.ndarray:
+    """
+    Adjust p-values using the Bonferroni correction (to control the FWER)
+
+    Inputs:
+    - ps: np.ndarray, p-values
+    Outputs:
+    - np.ndarray, adjusted p-values
+    """
+    M = len(ps) 
     return np.minimum( 1, M * ps )
 
-def adjusted_p_values_sidak(ps):
+def adjusted_p_values_sidak(ps: np.ndarray) -> np.ndarray:
+    """
+    Adjust p-values using the Sidak correction (to control the FWER)
+
+    Inputs:
+    - ps: np.ndarray, p-values
+    Outputs:
+    - np.ndarray, adjusted p-values
+    """
     M = len(ps)
     return 1 - (1 - ps) ** M
 
-def adjusted_p_values_holm(ps, *, variant = 'bonferroni'):
+def adjusted_p_values_holm(ps: np.ndarray, *, variant: str = 'bonferroni') -> np.ndarray:
+    """
+    Adjust p-values using the Holm correction (to control the FWER)
+
+    Inputs:
+    - ps: np.ndarray, p-values
+    - variant: str, variant of the Holm correction (bonferroni or sidak)
+    Outputs:
+    - np.ndarray, adjusted p-values
+    """
     assert variant in ['bonferroni', 'sidak']
     i = np.argsort(ps)
     M = len(ps)
@@ -447,14 +690,25 @@ def adjusted_p_values_holm(ps, *, variant = 'bonferroni'):
         if variant == 'bonferroni':
             candidate = min(1, ps[idx] * (M - j))
         else:
-            candidate = 1 - (1 - ps[idx]) ** M
+            candidate = 1 - (1 - ps[idx]) ** (M - j)
         p_adjusted[idx] = max(previous, candidate)
         previous = p_adjusted[idx]
     return p_adjusted
 
 
-def control_for_FDR( q, *, SR0 = 0, SR1 = .5, p_H1 = .05, T = 24, gamma3 = 0., gamma4 = 3. ):
+def control_for_FDR( 
+    q: float, 
+    *, 
+    SR0: float = 0, 
+    SR1: float = .5, 
+    p_H1: float = .05, 
+    T: int = 24, 
+    gamma3: float = 0., 
+    gamma4: float = 3. 
+) -> tuple[float, float, float]:
     """
+    Compute the critical value to test for multiple Sharpe ratios, while controling the false discovery rate (FDR)
+    
     Return the solution (alpha, beta, SR_c) of
         alpha = q / (1-q) * (1-p_H0) / p_H0 * (1-beta)
         SR_c = SR0 + sigma_SR0 * Z_inv( 1 - alpha )
@@ -462,6 +716,19 @@ def control_for_FDR( q, *, SR0 = 0, SR1 = .5, p_H1 = .05, T = 24, gamma3 = 0., g
 
     We first use grid search to find an approximate solution, then do a few more iterations to have a more precise result.
     (This is inefficient, but robust.)
+
+    Inputs:
+    - q: float, FDR level
+    - SR0: float, Sharpe ratio under H0
+    - SR1: float, Sharpe ratio under H1
+    - p_H1: float, probability that H1 is true
+    - T: int, number of observations
+    - gamma3: float, skewness
+    - gamma4: float, (non-excess) kurtosis
+    Outputs:
+    - alpha: float, significance level
+    - beta: float, type II error
+    - SR_c: float, critical value
     """
 
     Z_inv = scipy.stats.norm.ppf
@@ -516,8 +783,8 @@ def test_numeric_example():
     print( f"Power = 1 - β          = {sharpe_ratio_power( SR0=SR0, SR1 = SR1, T = T, gamma3 = gamma3, gamma4 = gamma4, alpha = alpha ):.3f}" )
     print( f"β                      = {1-sharpe_ratio_power( SR0=SR0, SR1 = SR1, T = T, gamma3 = gamma3, gamma4 = gamma4, alpha = alpha ):.3f}" )
     print( f"P[H1]                  = {p_H1:.3f}" )
-    print( f"pFDR = P[H0|SR>SR_c]   = {bayesian_fdr( p_H1, alpha, 1 - sharpe_ratio_power( SR0=SR0, SR1 = SR1, T = T, gamma3 = gamma3, gamma4 = gamma4, alpha = alpha ) ):.3f}" )
-    print( f"oFDR = P[H0|SR>SR_obs] = {posterior_p_value( SR = mu / sigma, SR0=SR0, SR1=SR1, T=T, p_H1=p_H1, gamma3 = gamma3, gamma4 = gamma4 ):.3f}" )
+    print( f"pFDR = P[H0|SR>SR_c]   = {pFDR( p_H1, alpha, 1 - sharpe_ratio_power( SR0=SR0, SR1 = SR1, T = T, gamma3 = gamma3, gamma4 = gamma4, alpha = alpha ) ):.3f}" )
+    print( f"oFDR = P[H0|SR>SR_obs] = {oFDR( SR = mu / sigma, SR0=SR0, SR1=SR1, T=T, p_H1=p_H1, gamma3 = gamma3, gamma4 = gamma4 ):.3f}" )
 
     print( "\nFWER" )
     number_of_trials = 10
@@ -532,7 +799,7 @@ def test_numeric_example():
     print( f"DSR                    = {DSR:.3f}" )
     print( f"SR1_adj                = {SR1 + SR0_adj:.3f}" )
     print( f"σ_SR1_adj              = {sqrt( sharpe_ratio_variance( SR = SR1 + SR0_adj, gamma3 = gamma3, gamma4 = gamma4, T = T ) ):.3f}" )
-    print( f"oFDR = P[H0|SR>SR_obs] = {posterior_p_value( SR = mu / sigma, SR0=SR0_adj, SR1=SR1+SR0_adj, T=T, p_H1=p_H1, gamma3 = gamma3, gamma4 = gamma4 ):.3f}" )
+    print( f"oFDR = P[H0|SR>SR_obs] = {oFDR( SR = mu / sigma, SR0=SR0_adj, SR1=SR1+SR0_adj, T=T, p_H1=p_H1, gamma3 = gamma3, gamma4 = gamma4 ):.3f}" )
 
     print( "\nFDR" )
     q    = .25
@@ -560,8 +827,8 @@ if __name__ == '__main__':
     test_minimum_track_record_length()
     test_probabilistic_sharpe_ratio()
     test_sharpe_ratio_power()
-    test_bayesian_fdr()
-    test_posterior_p_value()
+    test_pFDR()
+    test_oFDR()
     test_robust_covariance_inverse()
     test_minimum_variance_weights_for_correlated_assets()
     test_numeric_example()
