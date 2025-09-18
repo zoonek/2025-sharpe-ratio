@@ -1,3 +1,61 @@
+"""
+The following functions compute the main quantities presented in the paper: 
+  sharpe_ratio_variance(SR, T, γ₃, γ₄, K)
+  minimum_track_record_length(SR, SR₀, γ₃, γ₄, α)
+  probabilistic_sharpe_ratio(SR, SR₀, T, γ₃, γ₄)
+  critical_sharpe_ratio(SR₀, T, γ₃, γ₄, α, K)
+  sharpe_ratio_power(SR₀, SR₁, T, γ₃, γ₄, α)
+  pFDR(p₁, α, β)
+  oFDR(SR, SR₀, SR₁, T, p₁, γ₃, γ₄)
+  expected_maximum_sharpe_ratio(K, σ₀², SR₀)
+  FDR_critical_value(q, SR₀, SR₁, σ₀, σ₁, p₁)
+  control_for_FDR(q, SR₀, SR₁, p₁, T, γ₃, γ₄, K)
+
+We use the following notations: 
+  SR: observed Sharpe ratio
+  γ₃: skewness of the returns
+  γ₄: (non-excess) kurtosis of the returns
+  T: number of observations
+  SR₀: Sharpe ratio under H₀
+  SR₂: Sharpe ratio under H₁
+  K: number of trials (we only see the maximum Sharpe ratio of K trials)
+  α: significance level, P[SR>SR_c|H₀]
+  1-β: power, P[reject H₀ | H₁] = P[SR>SR_c|H₁]
+  β: type II error, P[SR<SR_c|H1]
+  p₁ = P[H₁]
+  σ₀: standard deviation of the Sharpe ratios under H₀
+  σ₁: standard deviation of the Sharpe ratios under H₁
+  q: desired false discovery date (FDR)
+
+To account for multiple testing, the following may be useful:
+  effective_rank(C)
+  number_of_clusters(C)
+  robust_covariance_inverse(V)
+  minimum_variance_weights_for_correlated_assets(V)
+  variance_of_the_clustered_trials(X, clusters)
+
+The following function reproduces the numeric example in the paper:
+  test_numeric_example()
+
+The following functions were used to generate sample data:
+  get_random_correlation_matrix(n, k, T, ε)
+  generate_non_gaussian_data(T, n, SR₀, name)
+
+The following functions compute the classical multiple testing adjustments: 
+  adjusted_p_values_bonferroni(ps)
+  adjusted_p_values_sidak(ps)
+  adjusted_p_values_holm(ps)
+  scipy.stats.false_discovery_control(ps), statsmodels.stats.multitest.fdrcorrection(ps, q)
+
+The following functions were used to compute the variance of the maximum of k Sharpe ratios
+  moments_Mk(k, ρ)
+  make_expectation_gh(N)
+
+The following functions are used to pretty-print p-values
+  significance_stars(p)
+  round_p_value(p)
+"""
+
 from deprecated import deprecated
 import warnings
 import math
@@ -606,9 +664,9 @@ def variance_of_the_clustered_trials(X: np.ndarray, clusters: np.ndarray) -> tup
     return SRs.var(), SRs, y
 
 
-def expected_maximum_sharpe_ratio( number_of_trials: int, variance: float ) -> float:
+def expected_maximum_sharpe_ratio( number_of_trials: int, variance: float, SR0: float = 0 ) -> float:
     """
-    Expected maximum Sharpe ratio
+    Expected maximum Sharpe ratio; add SR0 if non-zero
 
     Inputs:
     - number_of_trials: int, number of trials
@@ -616,7 +674,7 @@ def expected_maximum_sharpe_ratio( number_of_trials: int, variance: float ) -> f
     Outputs:
     - float, expected maximum Sharpe ratio
     """
-    return (
+    return SR0 + (
         np.sqrt( variance ) * (
             ( 1 - np.euler_gamma ) * scipy.stats.norm.ppf( 1 - 1 / number_of_trials ) +
             np.euler_gamma * scipy.stats.norm.ppf( 1 - 1 / number_of_trials / np.exp(1) )
@@ -808,6 +866,7 @@ def control_for_FDR(
     gamma3: float = 0., 
     gamma4: float = 3.,
     K: int = 1,
+    # The other arguments are no longer used
     grid_size: int = 10_000,
     max_iterations: int = 1000,
     epsilon: float = 1e-14,
