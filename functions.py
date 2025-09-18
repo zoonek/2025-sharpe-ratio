@@ -1,4 +1,5 @@
 from deprecated import deprecated
+import warnings
 import math
 import scipy.stats
 import numpy as np
@@ -6,6 +7,61 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_samples
+
+
+def make_expectation_gh(n_nodes=200):
+    """
+    Expectation under Z ~ N(0,1) via Gauss–Hermite:
+        E[g(Z)] = (1/√π) * Σ w_i * g(√2 * t_i), 
+    where (t_i, w_i) are GH nodes/weights
+    
+    Inputs:
+    - n_nodes: int, number of nodes
+    Outputs:
+    - E: function to compute the expectation, f↦E[f(X)]
+    """
+    nodes, weights = np.polynomial.hermite.hermgauss(n_nodes)
+    scale = np.sqrt(2.0)
+    norm = 1.0 / np.sqrt(np.pi)
+    x = scale * nodes
+    def E(g):
+        vals = g(x)
+        return norm * np.dot(weights, vals)
+    return E
+
+E_under_normal = make_expectation_gh(n_nodes=200)
+
+def moments_Mk(k, *, rho=0):
+    """
+    Moments of M_k = Max(Z_1, Z_2, ..., Z_k), where the Z_i are i.i.d. N(0,1)
+    
+    The density is 
+        f_M(x) = k φ(x) Φ(x)^(k-1),
+    so the moments are 
+        E[M_k^r] = k * E[ Z^r * Φ(Z)^(k-1) ].
+
+    For the correlated case, we assume equi-correlation,
+        Zᵢ = √ρX + √(1-ρ)Yᵢ
+        M = √ρX + √(1-ρ)Max(Yᵢ)
+
+    Inputs:
+    - k: int, number of variables
+    - rho: float, correlation coefficient
+    Outputs:
+    - Ez: float, expectation of M_k
+    - Ez2: float, expectation of M_k^2
+    - var: float, variance of M_k
+    """
+    Phi = scipy.stats.norm.cdf
+    Ez  = E_under_normal(lambda z: k * z    * (Phi(z) ** (k - 1)))
+    Ez2 = E_under_normal(lambda z: k * z*z  * (Phi(z) ** (k - 1)))
+    var = Ez2 - Ez**2
+
+    Ez = (1-rho) * Ez
+    var = rho + (1-rho) * var
+    Ez2 = var + Ez**2
+
+    return Ez, Ez2, var
 
 
 def significance_stars(p: float) -> str:
@@ -238,9 +294,11 @@ def generate_non_gaussian_data(
 
 def sharpe_ratio_variance( 
     SR: float, 
-    T: int, *, 
+    T: int, 
+    *, 
     gamma3: float = 0., 
     gamma4: float = 3.,
+    K: int = 1,
 ) -> float:
     """
     Asymptotic variance of the Sharpe ratio
@@ -250,10 +308,12 @@ def sharpe_ratio_variance(
     - T: int, number of observations
     - gamma3: float, skewness
     - gamma4: float, (non-excess) kurtosis
+    - K: int, number of strategies whose Sharpe ratios we take the maximum of -- larger K means smaller variance
     Outputs:
     - float, the variance of the Sharpe ratio
     """
-    return ( 1 - gamma3 * SR + (gamma4-1)/4 * SR**2 ) / T
+    V = ( 1 - gamma3 * SR + (gamma4-1)/4 * SR**2 ) / T
+    return V * moments_Mk(K)[2]
 
 def test_sharpe_ratio_variance():
     assert round( math.sqrt( sharpe_ratio_variance( SR = .036 / .079, gamma3 = -2.448, gamma4 = 10.164, T = 24 ) ), 3 ) == .329
@@ -324,6 +384,7 @@ def critical_sharpe_ratio(
     gamma3: float = 0., 
     gamma4: float = 3., 
     alpha: float = 0.05,
+    K: int = 1
 ) -> float:
     """
     Critical value for the test  H0: SR=SR0  vs  H1: SR>SR0.
@@ -337,7 +398,7 @@ def critical_sharpe_ratio(
     Outputs:
     - float, critical value
     """
-    variance = sharpe_ratio_variance(SR0, T, gamma3=gamma3, gamma4=gamma4)
+    variance = sharpe_ratio_variance(SR0, T, gamma3=gamma3, gamma4=gamma4, K=K)
     return SR0 + scipy.stats.norm.ppf(1 - alpha) * math.sqrt(variance)
 
 
@@ -694,6 +755,49 @@ def adjusted_p_values_holm(ps: np.ndarray, *, variant: str = 'bonferroni') -> np
     return p_adjusted
 
 
+
+def FDR_critical_value( q, SR0, SR1, sigma0, sigma1, p_H1 ):
+    """
+    Given
+        H ~ Bern(p₁)
+        X₀ ~ N(μ₀,σ₀²)
+        X₁ ~ N(μ₁,σ₁²)
+    compute c such that
+        P[H=0|X_H>c] = q
+    
+    Inputs: 
+        q: float, desired FDR
+        SR0, SR1: float, mean of X0 and X1
+        sigma0, sigma1: float, standard deviation of X0 and X1
+        p_H1: float, probability of H=1
+    Returns: 
+        c: float, critical value
+    """
+
+    assert SR0 < SR1
+    assert 0 < q < 1
+    assert 0 < p_H1 < 1
+    assert 0 < sigma0
+    assert 0 < sigma1
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="invalid value encountered in scalar divide")
+
+        def f(c): 
+            a = 1/( 
+                1 + 
+                scipy.stats.norm.sf( (c - SR1) / sigma1 ) / 
+                scipy.stats.norm.sf( (c - SR0) / sigma0 ) * 
+                p_H1 / (1-p_H1)
+            )
+            return np.where( np.isfinite(a), a, 0 )
+
+        if f(-10) < q:  # Solution outside of the search interval
+            return -np.inf
+
+        return scipy.optimize.brentq( lambda c: f(c) - q, -10, 10 )
+
+
 def control_for_FDR( 
     q: float, 
     *, 
@@ -703,6 +807,7 @@ def control_for_FDR(
     T: int = 24, 
     gamma3: float = 0., 
     gamma4: float = 3.,
+    K: int = 1,
     grid_size: int = 10_000,
     max_iterations: int = 1000,
     epsilon: float = 1e-14,
@@ -739,30 +844,38 @@ def control_for_FDR(
     Z_inv = scipy.stats.norm.ppf
     Z = scipy.stats.norm.cdf
 
-    s0 = math.sqrt( sharpe_ratio_variance( SR0, T, gamma3=gamma3, gamma4=gamma4 ) )
-    s1 = math.sqrt( sharpe_ratio_variance( SR1, T, gamma3=gamma3, gamma4=gamma4 ) )
-    def one_iteration( alpha, *, q, s0, s1, p_H1 = .05, T = 24 ):
-        SRc = SR0 + s0 * Z_inv( 1 - alpha )
-        beta = Z( (SRc - SR1 ) / s1 )
-        alpha = q/(1-q) * p_H1/(1-p_H1) * (1-beta)
-        return alpha, beta, SRc
+    s0 = math.sqrt( sharpe_ratio_variance( SR0, T, gamma3=gamma3, gamma4=gamma4, K=K ) )
+    s1 = math.sqrt( sharpe_ratio_variance( SR1, T, gamma3=gamma3, gamma4=gamma4, K=K ) )
 
-    # Grid search
-    xs = np.linspace( 0, 1, grid_size )[1:-1]
-    ys = [ one_iteration( alpha, q=q, s0=s0, s1=s1, p_H1=p_H1, T=T )[0] for alpha in xs ]
-    alpha = xs[ np.argmin( np.abs( xs - ys ) ) ]
+    if False:  # Old implementation (slow)
+            
+        def one_iteration( alpha, *, q, s0, s1, p_H1 = .05, T = 24 ):
+            SRc = SR0 + s0 * Z_inv( 1 - alpha )
+            beta = Z( (SRc - SR1 ) / s1 )
+            alpha = q/(1-q) * p_H1/(1-p_H1) * (1-beta)
+            return alpha, beta, SRc
 
-    previous_alpha = previous_beta = previous_SRc = np.inf
-    for _ in range(max_iterations):
-        alpha, beta, SRc = one_iteration( alpha, q=q, s0=s0, s1=s1, p_H1=p_H1, T=T )
-        error = np.abs(alpha - previous_alpha) + np.abs(beta - previous_beta) + np.abs(SRc - previous_SRc)
-        if np.isnan(error) or ( error < epsilon ): 
-            break
-        previous_alpha = alpha
-        previous_beta = beta
-        previous_SRc = SRc
-    assert np.isnan(error) or ( error < epsilon ), f"Error: {error:.3g} > {epsilon:.3g}"
+        # Grid search
+        xs = np.linspace( 0, 1, grid_size )[1:-1]
+        ys = [ one_iteration( alpha, q=q, s0=s0, s1=s1, p_H1=p_H1, T=T )[0] for alpha in xs ]
+        alpha = xs[ np.argmin( np.abs( xs - ys ) ) ]
 
+        previous_alpha = previous_beta = previous_SRc = np.inf
+        for _ in range(max_iterations):
+            alpha, beta, SRc = one_iteration( alpha, q=q, s0=s0, s1=s1, p_H1=p_H1, T=T )
+            error = np.abs(alpha - previous_alpha) + np.abs(beta - previous_beta) + np.abs(SRc - previous_SRc)
+            if np.isnan(error) or ( error < epsilon ): 
+                break
+            previous_alpha = alpha
+            previous_beta = beta
+            previous_SRc = SRc
+        assert np.isnan(error) or ( error < epsilon ), f"Error: {error:.3g} > {epsilon:.3g}"
+
+    else: 
+        SRc = FDR_critical_value( q, SR0, SR1, s0, s1, p_H1 )
+
+    beta = Z( (SRc - SR1 ) / s1 )
+    alpha = q/(1-q) * p_H1/(1-p_H1) * (1-beta)
     q_hat = 1/( 1 + (1-beta)/alpha * p_H1/(1-p_H1) )
 
     return alpha, beta, SRc, q_hat
