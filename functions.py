@@ -21,13 +21,13 @@ We use the following notations:
   K: number of trials (we only see the maximum Sharpe ratio of K trials)
   α: significance level, P[SR>SR_c|H₀]
   1-β: power, P[reject H₀ | H₁] = P[SR>SR_c|H₁]
-  β: type II error, P[SR<SR_c|H1]
+  β: type II error, P[SR<SR_c|H₁]
   p₁ = P[H₁]
   σ₀: standard deviation of the Sharpe ratios under H₀
   σ₁: standard deviation of the Sharpe ratios under H₁
   q: desired false discovery date (FDR)
 
-To account for multiple testing, the following may be useful:
+To account for multiple testing (K>1), the following may be useful:
   effective_rank(C)
   number_of_clusters(C)
   robust_covariance_inverse(V)
