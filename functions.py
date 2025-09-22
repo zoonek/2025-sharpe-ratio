@@ -407,10 +407,12 @@ def test_minimum_track_record_length():
 def probabilistic_sharpe_ratio( 
     SR: float, 
     SR0: float, 
-    T: int, 
-    *, 
+    *,
+    variance: float = None,
+    T: int = None, 
     gamma3: float = 0., 
     gamma4: float = 3.,
+    K: int = 1,
 ) -> float:
     """
     Probabilistic Sharpe Ratio (PSR)
@@ -418,17 +420,24 @@ def probabilistic_sharpe_ratio(
     This is 1-p, where p is the p-value of the test  H0: SR=SR0  vs  H1: SR>SR0.
     It can be interpreted as a Sharpe ratio "on a probability scale", i.e., in [0,1].
 
+    TODO: In case of multiple testing, we currently expect SR0 to be already adjusted; this function will only adjust the variance
+
     Inputs: 
     - SR: float, observed Sharpe ratio
     - SR0: float, Sharpe ratio under H0
     - T: int, number of observations
     - gamma3: float, skewness
     - gamma4: float, (non-excess) kurtosis
+    - K: int, number of strategies whose Sharpe ratios we take the maximum of -- larger K means smaller variance
     Outputs:
     - float, probabilistic Sharpe ratio
     """
-    variance = sharpe_ratio_variance( SR0, T, gamma3 = gamma3, gamma4 = gamma4 )
+    if variance is None:
+        variance = sharpe_ratio_variance( SR0, T, gamma3 = gamma3, gamma4 = gamma4, K = K )
+    else: 
+        assert T is None, "Provide either the variance or (T, gamma3, gamma4)"
     return scipy.stats.norm.cdf( (SR - SR0) / math.sqrt(variance) )
+
 
 def test_probabilistic_sharpe_ratio():
     assert round( probabilistic_sharpe_ratio( SR = .036 / .079, SR0 = 0,  T = 24, gamma3 = -2.448, gamma4 = 10.164), 3 ) == .987
@@ -442,7 +451,7 @@ def critical_sharpe_ratio(
     gamma3: float = 0., 
     gamma4: float = 3., 
     alpha: float = 0.05,
-    K: int = 1
+    K: int = 1,
 ) -> float:
     """
     Critical value for the test  H0: SR=SR0  vs  H1: SR>SR0.
@@ -453,6 +462,7 @@ def critical_sharpe_ratio(
     - gamma3: float, skewness
     - gamma4: float, (non-excess) kurtosis
     - alpha: float, confidence level
+    - K: int, number of strategies whose Sharpe ratios we take the maximum of -- larger K means smaller variance
     Outputs:
     - float, critical value
     """
@@ -468,6 +478,7 @@ def sharpe_ratio_power(
     gamma3: float = 0., 
     gamma4: float = 3., 
     alpha: float = 0.05,
+    K: int = 1,
 ) -> float:
     """
     Power (1-β) of the test  H0: SR=SR0  vs  H1: SR=SR1.
@@ -488,11 +499,12 @@ def sharpe_ratio_power(
     - gamma3: float, skewness
     - gamma4: float, (non-excess) kurtosis
     - alpha: float, confidence level
+    - K: int, number of strategies whose Sharpe ratios we take the maximum of -- larger K means smaller variance
     Outputs:
     - float, power
     """
     critical_SR = critical_sharpe_ratio(SR0, T, gamma3=gamma3, gamma4=gamma4, alpha=alpha)
-    variance = sharpe_ratio_variance(SR1, T, gamma3=gamma3, gamma4=gamma4)
+    variance = sharpe_ratio_variance(SR1, T, gamma3=gamma3, gamma4=gamma4, K=K)
     beta = scipy.stats.norm.cdf((critical_SR - SR1) / math.sqrt(variance))
     return 1 - beta
 
@@ -539,9 +551,12 @@ def oFDR(
     *, 
     gamma3: float = 0., 
     gamma4: float = 3.,
+    K: int = 1,
 ) -> float:
     """
     Posterior probability of H0, given that SR>SR_obs
+
+    In case of multiple testing, we currently expect SR0 and SR1 to be already adjusted; this function will only adjust the variance
 
     Inputs:
     - SR: float, observed Sharpe ratio
@@ -551,11 +566,12 @@ def oFDR(
     - p_H1: float, probability that H1 is true
     - gamma3: float, skewness
     - gamma4: float, (non-excess) kurtosis
+    - K: int, number of strategies whose Sharpe ratios we take the maximum of -- larger K means smaller variance
     Outputs:
     - float, posterior probability of H0
     """
-    p0 = 1 - probabilistic_sharpe_ratio( SR, SR0, T, gamma3=gamma3, gamma4=gamma4 )
-    p1 = 1 - probabilistic_sharpe_ratio( SR, SR1, T, gamma3=gamma3, gamma4=gamma4 )
+    p0 = 1 - probabilistic_sharpe_ratio( SR, SR0, T=T, gamma3=gamma3, gamma4=gamma4, K=K )
+    p1 = 1 - probabilistic_sharpe_ratio( SR, SR1, T=T, gamma3=gamma3, gamma4=gamma4, K=K )
     p_H0 = 1 - p_H1
     return p0 * p_H0 / ( p0 * p_H0 + p1 * p_H1 )
 
@@ -680,6 +696,13 @@ def expected_maximum_sharpe_ratio( number_of_trials: int, variance: float, SR0: 
             np.euler_gamma * scipy.stats.norm.ppf( 1 - 1 / number_of_trials / np.exp(1) )
         )
     )
+
+def variance_of_the_maximum_of_k_Sharpe_ratios( number_of_trials: int, variance: float ) -> float:
+    """
+    Variance of the maximum of K Sharpe ratios
+    """
+    return variance * moments_Mk(number_of_trials)[2]
+
 
 @deprecated(reason="Not used")
 def deflated_sharpe_ratio(X: np.ndarray, *, verbose: bool = False, cluster: bool = True, details: bool = False) -> float:
@@ -840,6 +863,7 @@ def FDR_critical_value( q, SR0, SR1, sigma0, sigma1, p_H1 ):
 
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="invalid value encountered in scalar divide")
+        warnings.filterwarnings("ignore", message="divide by zero encountered in scalar divide")
 
         def f(c): 
             a = 1/( 
@@ -893,6 +917,7 @@ def control_for_FDR(
     - grid_size: int, number of points in the grid search
     - max_iterations: int, maximum number of fixed point iterations after the grid search
     - epsilon: float, tolerance for the fixed point iterations
+    - K: int, number of strategies whose Sharpe ratios we take the maximum of -- larger K means smaller variance
     Outputs:
     - alpha: float, significance level, P[SR>SR_c|H0]
     - beta: float, type II error, P[SR<=SR_c|H1]; the power is 1-beta=P[SR>SR_c|H1]
@@ -952,6 +977,8 @@ def test_numeric_example():
     alpha  = .10
 
     SR = mu / sigma
+    print( f"SR0                    = {SR0:.3f}" )
+    print( f"SR1                    = {SR1:.3f}" )
     print( f"μ                      = {mu:.3f}" )
     print( f"σ                      = {sigma:.3f}" )
     print( f"γ3                     = {gamma3:.3f}" )
@@ -978,17 +1005,29 @@ def test_numeric_example():
     print( "\nFWER" )
     number_of_trials = 10
     variance = .1
-    SR0_adj = expected_maximum_sharpe_ratio( number_of_trials, variance )
-    sigma_SR0_adj = math.sqrt( sharpe_ratio_variance( SR = SR0_adj, gamma3 = gamma3, gamma4 = gamma4, T = T ) )
-    DSR = probabilistic_sharpe_ratio(SR, SR0 = SR0_adj, T = T, gamma3 = gamma3, gamma4 = gamma4 )
-    print( f"K                      = {number_of_trials}" )
-    print( f"Var[ SR ]              = {variance:.3f}" )
-    print( f"SR0_adj = E[max SR]    = {SR0_adj:.3f}" )
-    print( f"σ_SR0_adj              = {sigma_SR0_adj:.3f}" )
-    print( f"DSR                    = {DSR:.3f}" )
-    print( f"SR1_adj                = {SR1 + SR0_adj:.3f}" )
-    print( f"σ_SR1_adj              = {math.sqrt( sharpe_ratio_variance( SR = SR1 + SR0_adj, gamma3 = gamma3, gamma4 = gamma4, T = T ) ):.3f}" )
-    print( f"oFDR = P[H0|SR>SR_obs] = {oFDR( SR = mu / sigma, SR0=SR0_adj, SR1=SR1+SR0_adj, T=T, p_H1=p_H1, gamma3 = gamma3, gamma4 = gamma4 ):.3f}" )
+    E_max_SR = expected_maximum_sharpe_ratio( number_of_trials, variance )   
+    SR0_adj = SR0 + E_max_SR
+    SR1_adj = SR1 + E_max_SR
+    sigma_SR0_adj_single = math.sqrt( sharpe_ratio_variance( SR = SR0_adj, gamma3 = gamma3, gamma4 = gamma4, T = T ) )
+    sigma_SR0_adj =  math.sqrt( sharpe_ratio_variance( SR = SR0_adj, gamma3 = gamma3, gamma4 = gamma4, T = T, K = number_of_trials ) )
+    sigma_SR1_adj_single = math.sqrt( sharpe_ratio_variance( SR = SR1_adj, gamma3 = gamma3, gamma4 = gamma4, T = T ) )
+    sigma_SR1_adj =  math.sqrt( sharpe_ratio_variance( SR = SR1 + SR0_adj, gamma3 = gamma3, gamma4 = gamma4, T = T, K = number_of_trials ) )
+    DSR_single = probabilistic_sharpe_ratio(SR, SR0 = SR0_adj, T = T, gamma3 = gamma3, gamma4 = gamma4 )
+    DSR        = probabilistic_sharpe_ratio(SR, SR0 = SR0_adj, T = T, gamma3 = gamma3, gamma4 = gamma4, K = number_of_trials )
+    print( f"K                         = {number_of_trials}" )
+    print( f"Var[SR_k]                 = {variance:.3f}  (only used to compute E[max SR])" )
+    print( f"E[max SR]                 = {E_max_SR:.3f}" )
+    print( f"SR0_adj = SR0 + E[max SR] = {SR0_adj:.3f}" )
+    print( f"SR1_adj = SR1 + E[max SR] = {SR1_adj:.3f}" )
+    print( f"σ_SR0_adj                 = {sigma_SR0_adj:.3f}" )
+    print( f"σ_SR1_adj                 = {sigma_SR1_adj:.3f}" )
+    print( f"DSR                       = {DSR:.3f}" )
+    print( f"oFDR = P[H0|SR>SR_obs]    = {oFDR( SR = mu / sigma, SR0=SR0_adj, SR1=SR1+SR0_adj, T=T, p_H1=p_H1, gamma3 = gamma3, gamma4 = gamma4, K = number_of_trials ):.3f}" )
+
+    print( f"σ_SR0_adj (K=1)              = {sigma_SR0_adj_single:.3f}" )
+    print( f"σ_SR1_adj (K=1)              = {sigma_SR1_adj_single:.3f}" )
+    print( f"DSR (K=1)                    = {DSR_single:.3f}" )
+    print( f"oFDR = P[H0|SR>SR_obs] (K=1) = {oFDR( SR = mu / sigma, SR0=SR0_adj, SR1=SR1+SR0_adj, T=T, p_H1=p_H1, gamma3 = gamma3, gamma4 = gamma4 ):.3f}" )
 
     print( "\nFDR" )
     q    = .25
@@ -1002,12 +1041,19 @@ def test_numeric_example():
     print( f"σ_SR1                  = {math.sqrt( sharpe_ratio_variance( SR = SR1, gamma3 = gamma3, gamma4 = gamma4, T = T ) ):.3f}" )
 
     print( "\nFWER-FDR" )
-    alpha_, beta_, SR_c, q_hat = control_for_FDR( q, SR0 = SR0+SR0_adj, SR1 = SR1+SR0_adj, p_H1 = p_H1, T = T, gamma3 = gamma3, gamma4 = gamma4 )
-    print( f"σ_SR0                  = {math.sqrt( sharpe_ratio_variance( SR = SR0+SR0_adj, gamma3 = gamma3, gamma4 = gamma4, T = T ) ):.3f}" )
-    print( f"σ_SR1                  = {math.sqrt( sharpe_ratio_variance( SR = SR1+SR0_adj, gamma3 = gamma3, gamma4 = gamma4, T = T ) ):.3f}" )
+    alpha_W, beta_W, SR_c_W, q_hat_W = control_for_FDR( q, SR0 = SR0+SR0_adj, SR1 = SR1+SR0_adj, p_H1 = p_H1, T = T, gamma3 = gamma3, gamma4 = gamma4 )
+    alpha_, beta_, SR_c, q_hat = control_for_FDR( q, SR0 = SR0+SR0_adj, SR1 = SR1+SR0_adj, p_H1 = p_H1, T = T, gamma3 = gamma3, gamma4 = gamma4, K = number_of_trials )
+    print( f"σ_SR0                  = {math.sqrt( sharpe_ratio_variance( SR = SR0+SR0_adj, gamma3 = gamma3, gamma4 = gamma4, T = T, K = number_of_trials ) ):.3f}" )
+    print( f"σ_SR1                  = {math.sqrt( sharpe_ratio_variance( SR = SR1+SR0_adj, gamma3 = gamma3, gamma4 = gamma4, T = T, K = number_of_trials ) ):.3f}" )
     print( f"α                      = {alpha_:.5f}" )
     print( f"β                      = {beta_:.3f}" )
     print( f"SR_c                   = {SR_c:.3f}" )
+    
+    print( f"σ_SR0 (K=1)          = {math.sqrt( sharpe_ratio_variance( SR = SR0+SR0_adj, gamma3 = gamma3, gamma4 = gamma4, T = T ) ):.3f}" )
+    print( f"σ_SR1 (K=1)          = {math.sqrt( sharpe_ratio_variance( SR = SR1+SR0_adj, gamma3 = gamma3, gamma4 = gamma4, T = T ) ):.3f}" )
+    print( f"α (K=1)              = {alpha_W:.5f}" )
+    print( f"β (K=1)              = {beta_W:.3f}" )
+    print( f"SR_c (K=1)           = {SR_c_W:.3f}" )
 
 
 if __name__ == '__main__':
