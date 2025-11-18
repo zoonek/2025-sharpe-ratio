@@ -309,7 +309,6 @@ def generate_non_gaussian_data(
     *, 
     SR0: float = 0, 
     name: str = 'severe', 
-    seed: int = None,
 ) -> np.ndarray:
     """
     Generate non-Gaussian data
@@ -319,7 +318,6 @@ def generate_non_gaussian_data(
     - nc: int, number of columns
     - SR0: float, the target Sharpe ratio
     - name: str, distribution (gaussian, mild, moderate, severe)
-    - seed: int, seed for the random number generator
     Outputs:
     - X: np.ndarray, matrix of observations, shape (nr, nc)
     """
@@ -337,19 +335,18 @@ def generate_non_gaussian_data(
         m2 = w*(sigma_core**2 + mu_core**2) + p_tail*(sigma_tail**2 + mu_tail**2)
         return m2 - mu**2
 
-    def gen_with_true_SR0(reps, T, cfg, SR0, seed):
+    def gen_with_true_SR0(reps, T, cfg, SR0):
         p, mu_tail, sig_tail, sig_core = cfg
         # Zero-mean baseline mixture (choose mu_core so mean=0)
         mu_core0 = - p*mu_tail/(1.0 - p)
         std0 = np.sqrt(mixture_variance(p, mu_tail, sig_tail, mu_core0, sig_core))
         mu_shift = SR0 * std0  # sets population Sharpe to SR0, preserves skew/kurt
-        rng = np.random.default_rng(seed)
-        mask = rng.random((reps, T)) < p
-        X = rng.normal(mu_core0 + mu_shift, sig_core, size=(reps, T))
-        X[mask] = rng.normal(mu_tail + mu_shift, sig_tail, size=mask.sum())
+        mask = np.random.uniform(size=(reps, T)) < p
+        X = np.random.normal(mu_core0 + mu_shift, sig_core, size=(reps, T))
+        X[mask] = np.random.normal(mu_tail + mu_shift, sig_tail, size=mask.sum())
         return X
 
-    return gen_with_true_SR0( nr, nc, configs[name], SR0, seed )
+    return gen_with_true_SR0( nr, nc, configs[name], SR0 )
 
 
 def generate_autocorrelated_Gaussian_data( nr, nc, rho = .5 ): 
@@ -1128,95 +1125,97 @@ def control_for_FDR(
 
 
 def test_numeric_example():
-    mu     = .036
-    sigma  = .079
-    T      = 24
-    gamma3 = -2.448
-    gamma4 = 10.164
-    rho    = 0
-    SR0    = 0
-    SR1    = .5
-    p_H1   = .10
-    alpha  = .10
-    SR = mu / sigma
-    print( f"SR0                    = {SR0:.3f}" )
-    print( f"SR1                    = {SR1:.3f}" )
-    print( f"μ                      = {mu:.3f}" )
-    print( f"σ                      = {sigma:.3f}" )
-    print( f"γ3                     = {gamma3:.3f}" )
-    print( f"γ4                     = {gamma4:.3f}" )
-    print( f"ρ                      = {rho:.3f}" )
-    print( f"T                      = {T}" )
-    print( f"SR                     = {SR:.3f}" )
-    print( f"σ_SR                   = {math.sqrt( sharpe_ratio_variance( SR = mu / sigma, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T ) ):.3f} (non-Gaussian)" )
-    print( f"σ_SR                   = {math.sqrt( sharpe_ratio_variance( SR = mu / sigma, gamma3 = 0,      gamma4 = 3,      T = T ) ):.3f} (Gaussian, iid)" )
-    print( f"MinTRL                 = {minimum_track_record_length( SR = mu / sigma, SR0 = 0, gamma3 = gamma3, gamma4 = gamma4, rho = rho, alpha = alpha ):.3f}" )
-    print( f"MinTRL(SR0=.1)         = {minimum_track_record_length( SR = mu / sigma, SR0 = .1, gamma3 = gamma3, gamma4 = gamma4, rho = rho, alpha = alpha ):.3f}" )
-    print( f"p = 1 - PSR(SR0=0)     = {1-probabilistic_sharpe_ratio( SR = mu / sigma, SR0 = 0,  T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho):.3f}" )
-    print( f"PSR(SR0=0)             = {  probabilistic_sharpe_ratio( SR = mu / sigma, SR0 = 0,  T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho):.3f}" )
-    print( f"PSR(SR0=.1)            = {probabilistic_sharpe_ratio( SR = mu / sigma, SR0 = .1, T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho):.3f}" )
-    print( f"SR0                    = {SR0:.3f}" )
-    print( f"SR_c                   = {critical_sharpe_ratio(SR0, T, gamma3=0.,     gamma4=3.,     rho = 0,   alpha=alpha):.3f} (Gaussian, iid)" )
-    print( f"SR_c                   = {critical_sharpe_ratio(SR0, T, gamma3=gamma3, gamma4=gamma4, rho = rho, alpha=alpha):.3f} (non-Gaussian -- unchanged if iid, SR0=0)" )
-    print( f"SR1                    = {SR1:.3f}" )
-    print( f"Power = 1 - β          = {sharpe_ratio_power( SR0=SR0, SR1 = SR1, T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho, alpha = alpha ):.3f}" )
-    print( f"β                      = {1-sharpe_ratio_power( SR0=SR0, SR1 = SR1, T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho, alpha = alpha ):.3f}" )
-    print( f"P[H1]                  = {p_H1:.3f}" )
-    print( f"pFDR = P[H0|SR>SR_c]   = {pFDR( p_H1, alpha, 1 - sharpe_ratio_power( SR0=SR0, SR1 = SR1, T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho, alpha = alpha ) ):.3f}" )
-    print( f"oFDR = P[H0|SR>SR_obs] = {oFDR( SR = mu / sigma, SR0=SR0, SR1=SR1, T=T, p_H1=p_H1, gamma3 = gamma3, gamma4 = gamma4, rho = rho ):.3f}" )
 
-    print( "\nFWER" )
-    number_of_trials = 10
-    variance = .1
-    E_max_SR = expected_maximum_sharpe_ratio( number_of_trials, variance )   
-    SR0_adj = SR0 + E_max_SR
-    SR1_adj = SR1 + E_max_SR
-    sigma_SR0_adj_single = math.sqrt( sharpe_ratio_variance( SR = SR0_adj, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T ) )
-    sigma_SR0_adj =  math.sqrt( sharpe_ratio_variance( SR = SR0_adj, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T, K = number_of_trials ) )
-    sigma_SR1_adj_single = math.sqrt( sharpe_ratio_variance( SR = SR1_adj, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T ) )
-    sigma_SR1_adj =  math.sqrt( sharpe_ratio_variance( SR = SR1 + SR0_adj, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T, K = number_of_trials ) )
-    DSR_single = probabilistic_sharpe_ratio(SR, SR0 = SR0_adj, T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho )
-    DSR        = probabilistic_sharpe_ratio(SR, SR0 = SR0_adj, T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho, K = number_of_trials )
-    print( f"K                         = {number_of_trials}" )
-    print( f"Var[SR_k]                 = {variance:.3f}  (only used to compute E[max SR])" )
-    print( f"E[max SR]                 = {E_max_SR:.3f}" )
-    print( f"SR0_adj = SR0 + E[max SR] = {SR0_adj:.3f}" )
-    print( f"SR1_adj = SR1 + E[max SR] = {SR1_adj:.3f}" )
-    print( f"σ_SR0_adj                 = {sigma_SR0_adj:.3f}" )
-    print( f"σ_SR1_adj                 = {sigma_SR1_adj:.3f}" )
-    print( f"DSR                       = {DSR:.3f}" )
-    print( f"oFDR = P[H0|SR>SR_obs]    = {oFDR( SR = mu / sigma, SR0=SR0_adj, SR1=SR1+SR0_adj, T=T, p_H1=p_H1, gamma3 = gamma3, gamma4 = gamma4, rho = rho, K = number_of_trials ):.3f}" )
+    for rho in [0, 0.2]: 
+        print( "----------" )
+        mu     = .036
+        sigma  = .079
+        T      = 24
+        gamma3 = -2.448
+        gamma4 = 10.164
+        SR0    = 0
+        SR1    = .5
+        p_H1   = .10
+        alpha  = .10
+        SR = mu / sigma
+        print( f"SR0                    = {SR0:.3f}" )
+        print( f"SR1                    = {SR1:.3f}" )
+        print( f"μ                      = {mu:.3f}" )
+        print( f"σ                      = {sigma:.3f}" )
+        print( f"γ3                     = {gamma3:.3f}" )
+        print( f"γ4                     = {gamma4:.3f}" )
+        print( f"ρ                      = {rho:.3f}" )
+        print( f"T                      = {T}" )
+        print( f"SR                     = {SR:.3f}" )
+        print( f"σ_SR                   = {math.sqrt( sharpe_ratio_variance( SR = mu / sigma, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T ) ):.3f} (non-Gaussian)" )
+        print( f"σ_SR                   = {math.sqrt( sharpe_ratio_variance( SR = mu / sigma, gamma3 = 0,      gamma4 = 3,      T = T ) ):.3f} (Gaussian, iid)" )
+        print( f"MinTRL                 = {minimum_track_record_length( SR = mu / sigma, SR0 = 0, gamma3 = gamma3, gamma4 = gamma4, rho = rho, alpha = alpha ):.3f}" )
+        print( f"MinTRL(SR0=.1)         = {minimum_track_record_length( SR = mu / sigma, SR0 = .1, gamma3 = gamma3, gamma4 = gamma4, rho = rho, alpha = alpha ):.3f}" )
+        print( f"p = 1 - PSR(SR0=0)     = {1-probabilistic_sharpe_ratio( SR = mu / sigma, SR0 = 0,  T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho):.3f}" )
+        print( f"PSR(SR0=0)             = {  probabilistic_sharpe_ratio( SR = mu / sigma, SR0 = 0,  T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho):.3f}" )
+        print( f"PSR(SR0=.1)            = {probabilistic_sharpe_ratio( SR = mu / sigma, SR0 = .1, T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho):.3f}" )
+        print( f"SR0                    = {SR0:.3f}" )
+        print( f"SR_c                   = {critical_sharpe_ratio(SR0, T, gamma3=0.,     gamma4=3.,     rho = 0,   alpha=alpha):.3f} (Gaussian, iid)" )
+        print( f"SR_c                   = {critical_sharpe_ratio(SR0, T, gamma3=gamma3, gamma4=gamma4, rho = rho, alpha=alpha):.3f} (non-Gaussian -- unchanged if iid, SR0=0)" )
+        print( f"SR1                    = {SR1:.3f}" )
+        print( f"Power = 1 - β          = {sharpe_ratio_power( SR0=SR0, SR1 = SR1, T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho, alpha = alpha ):.3f}" )
+        print( f"β                      = {1-sharpe_ratio_power( SR0=SR0, SR1 = SR1, T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho, alpha = alpha ):.3f}" )
+        print( f"P[H1]                  = {p_H1:.3f}" )
+        print( f"pFDR = P[H0|SR>SR_c]   = {pFDR( p_H1, alpha, 1 - sharpe_ratio_power( SR0=SR0, SR1 = SR1, T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho, alpha = alpha ) ):.3f}" )
+        print( f"oFDR = P[H0|SR>SR_obs] = {oFDR( SR = mu / sigma, SR0=SR0, SR1=SR1, T=T, p_H1=p_H1, gamma3 = gamma3, gamma4 = gamma4, rho = rho ):.3f}" )
 
-    print( f"σ_SR0_adj (K=1)              = {sigma_SR0_adj_single:.3f}" )
-    print( f"σ_SR1_adj (K=1)              = {sigma_SR1_adj_single:.3f}" )
-    print( f"DSR (K=1)                    = {DSR_single:.3f}" )
-    print( f"oFDR = P[H0|SR>SR_obs] (K=1) = {oFDR( SR = mu / sigma, SR0=SR0_adj, SR1=SR1+SR0_adj, T=T, p_H1=p_H1, gamma3 = gamma3, gamma4 = gamma4, rho = rho ):.3f}" )
+        print( "\nFWER" )
+        number_of_trials = 10
+        variance = .1
+        E_max_SR = expected_maximum_sharpe_ratio( number_of_trials, variance )   
+        SR0_adj = SR0 + E_max_SR
+        SR1_adj = SR1 + E_max_SR
+        sigma_SR0_adj_single = math.sqrt( sharpe_ratio_variance( SR = SR0_adj, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T ) )
+        sigma_SR0_adj =  math.sqrt( sharpe_ratio_variance( SR = SR0_adj, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T, K = number_of_trials ) )
+        sigma_SR1_adj_single = math.sqrt( sharpe_ratio_variance( SR = SR1_adj, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T ) )
+        sigma_SR1_adj =  math.sqrt( sharpe_ratio_variance( SR = SR1 + SR0_adj, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T, K = number_of_trials ) )
+        DSR_single = probabilistic_sharpe_ratio(SR, SR0 = SR0_adj, T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho )
+        DSR        = probabilistic_sharpe_ratio(SR, SR0 = SR0_adj, T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho, K = number_of_trials )
+        print( f"K                         = {number_of_trials}" )
+        print( f"Var[SR_k]                 = {variance:.3f}  (only used to compute E[max SR])" )
+        print( f"E[max SR]                 = {E_max_SR:.3f}" )
+        print( f"SR0_adj = SR0 + E[max SR] = {SR0_adj:.3f}" )
+        print( f"SR1_adj = SR1 + E[max SR] = {SR1_adj:.3f}" )
+        print( f"σ_SR0_adj                 = {sigma_SR0_adj:.3f}" )
+        print( f"σ_SR1_adj                 = {sigma_SR1_adj:.3f}" )
+        print( f"DSR                       = {DSR:.3f}" )
+        print( f"oFDR = P[H0|SR>SR_obs]    = {oFDR( SR = mu / sigma, SR0=SR0_adj, SR1=SR1+SR0_adj, T=T, p_H1=p_H1, gamma3 = gamma3, gamma4 = gamma4, rho = rho, K = number_of_trials ):.3f}" )
 
-    print( "\nFDR" )
-    q    = .25
-    alpha_, beta_, SR_c, q_hat = control_for_FDR( q, SR0 = SR0, SR1 = SR1, p_H1 = p_H1, T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho )
-    print( f"P[H1]                  = {p_H1:.3f}" )
-    print( f"q                      = {q:.3f}" )
-    print( f"α                      = {alpha_:.4f}" )
-    print( f"β                      = {beta_:.3f}" )
-    print( f"SR_c                   = {SR_c:.3f}" )
-    print( f"σ_SR0                  = {math.sqrt( sharpe_ratio_variance( SR = SR0, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T ) ):.3f}" )
-    print( f"σ_SR1                  = {math.sqrt( sharpe_ratio_variance( SR = SR1, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T ) ):.3f}" )
+        print( f"σ_SR0_adj (K=1)              = {sigma_SR0_adj_single:.3f}" )
+        print( f"σ_SR1_adj (K=1)              = {sigma_SR1_adj_single:.3f}" )
+        print( f"DSR (K=1)                    = {DSR_single:.3f}" )
+        print( f"oFDR = P[H0|SR>SR_obs] (K=1) = {oFDR( SR = mu / sigma, SR0=SR0_adj, SR1=SR1+SR0_adj, T=T, p_H1=p_H1, gamma3 = gamma3, gamma4 = gamma4, rho = rho ):.3f}" )
 
-    print( "\nFWER-FDR" )
-    alpha_W, beta_W, SR_c_W, q_hat_W = control_for_FDR( q, SR0 = SR0+SR0_adj, SR1 = SR1+SR0_adj, p_H1 = p_H1, T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho )
-    alpha_, beta_, SR_c, q_hat = control_for_FDR( q, SR0 = SR0+SR0_adj, SR1 = SR1+SR0_adj, p_H1 = p_H1, T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho, K = number_of_trials )
-    print( f"σ_SR0                  = {math.sqrt( sharpe_ratio_variance( SR = SR0+SR0_adj, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T, K = number_of_trials ) ):.3f}" )
-    print( f"σ_SR1                  = {math.sqrt( sharpe_ratio_variance( SR = SR1+SR0_adj, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T, K = number_of_trials ) ):.3f}" )
-    print( f"α                      = {alpha_:.5f}" )
-    print( f"β                      = {beta_:.3f}" )
-    print( f"SR_c                   = {SR_c:.3f}" )
-    
-    print( f"σ_SR0 (K=1)          = {math.sqrt( sharpe_ratio_variance( SR = SR0+SR0_adj, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T ) ):.3f}" )
-    print( f"σ_SR1 (K=1)          = {math.sqrt( sharpe_ratio_variance( SR = SR1+SR0_adj, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T ) ):.3f}" )
-    print( f"α (K=1)              = {alpha_W:.5f}" )
-    print( f"β (K=1)              = {beta_W:.3f}" )
-    print( f"SR_c (K=1)           = {SR_c_W:.3f}" )
+        print( "\nFDR" )
+        q    = .25
+        alpha_, beta_, SR_c, q_hat = control_for_FDR( q, SR0 = SR0, SR1 = SR1, p_H1 = p_H1, T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho )
+        print( f"P[H1]                  = {p_H1:.3f}" )
+        print( f"q                      = {q:.3f}" )
+        print( f"α                      = {alpha_:.4f}" )
+        print( f"β                      = {beta_:.3f}" )
+        print( f"SR_c                   = {SR_c:.3f}" )
+        print( f"σ_SR0                  = {math.sqrt( sharpe_ratio_variance( SR = SR0, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T ) ):.3f}" )
+        print( f"σ_SR1                  = {math.sqrt( sharpe_ratio_variance( SR = SR1, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T ) ):.3f}" )
+
+        print( "\nFWER-FDR" )
+        alpha_W, beta_W, SR_c_W, q_hat_W = control_for_FDR( q, SR0 = SR0+SR0_adj, SR1 = SR1+SR0_adj, p_H1 = p_H1, T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho )
+        alpha_, beta_, SR_c, q_hat = control_for_FDR( q, SR0 = SR0+SR0_adj, SR1 = SR1+SR0_adj, p_H1 = p_H1, T = T, gamma3 = gamma3, gamma4 = gamma4, rho = rho, K = number_of_trials )
+        print( f"σ_SR0                  = {math.sqrt( sharpe_ratio_variance( SR = SR0+SR0_adj, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T, K = number_of_trials ) ):.3f}" )
+        print( f"σ_SR1                  = {math.sqrt( sharpe_ratio_variance( SR = SR1+SR0_adj, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T, K = number_of_trials ) ):.3f}" )
+        print( f"α                      = {alpha_:.5f}" )
+        print( f"β                      = {beta_:.3f}" )
+        print( f"SR_c                   = {SR_c:.3f}" )
+        
+        print( f"σ_SR0 (K=1)          = {math.sqrt( sharpe_ratio_variance( SR = SR0+SR0_adj, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T ) ):.3f}" )
+        print( f"σ_SR1 (K=1)          = {math.sqrt( sharpe_ratio_variance( SR = SR1+SR0_adj, gamma3 = gamma3, gamma4 = gamma4, rho = rho, T = T ) ):.3f}" )
+        print( f"α (K=1)              = {alpha_W:.5f}" )
+        print( f"β (K=1)              = {beta_W:.3f}" )
+        print( f"SR_c (K=1)           = {SR_c_W:.3f}" )
 
 
 if __name__ == '__main__':
