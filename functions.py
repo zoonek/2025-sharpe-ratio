@@ -15,6 +15,7 @@ We use the following notations:
   SR: observed Sharpe ratio
   γ₃: skewness of the returns
   γ₄: (non-excess) kurtosis of the returns
+  ρ: autocorrelation of the returns, assumed to be AR(1)
   T: number of observations
   SR₀: Sharpe ratio under H₀
   SR₂: Sharpe ratio under H₁
@@ -40,6 +41,7 @@ The following function reproduces the numeric example in the paper:
 The following functions were used to generate sample data:
   get_random_correlation_matrix(n, k, T, ε)
   generate_non_gaussian_data(T, n, SR₀, name)
+  generate_autocorrelated_non_gaussian_data(T, n, SR₀, name, ρ)
 
 The following functions compute the classical multiple testing adjustments: 
   adjusted_p_values_bonferroni(ps)
