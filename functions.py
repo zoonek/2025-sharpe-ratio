@@ -357,11 +357,10 @@ def generate_autocorrelated_Gaussian_data( nr, nc, rho = .5 ):
         X[i,:] = rho*X[i-1,:] + X[i,:]
     return X
 
-def enforce_marginals( gaussian, marginals ): 
+def enforce_marginals_1d( gaussian, marginals ): 
+    assert gaussian.ndim == 1
+    assert marginals.ndim == 1
     assert gaussian.shape == marginals.shape
-    shape = gaussian.shape
-    gaussian = gaussian.flatten()
-    marginals = marginals.flatten()
     i = np.argsort( gaussian )
     i = np.argsort( gaussian )
     j = np.argsort( marginals )
@@ -370,7 +369,16 @@ def enforce_marginals( gaussian, marginals ):
     result = marginals[j[ii]]
     assert np.all( np.array( sorted( result ) ) == np.array( sorted( marginals ) ) )
     assert np.all( np.argsort( gaussian ) == np.argsort( result ) )
-    return result.reshape( shape )
+    return result
+
+def enforce_marginals( gaussian, marginals ): 
+    assert gaussian.ndim == 2
+    assert marginals.ndim == 2
+    assert gaussian.shape == marginals.shape
+    result = np.array( [ enforce_marginals_1d( gaussian[:,i], marginals[:,i] ) for i in range(gaussian.shape[1]) ] ).T
+    assert result.shape == gaussian.shape
+    return result
+
 
 def autocorrelation( X ): 
     nr, nc = X.shape
