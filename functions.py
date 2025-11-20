@@ -63,12 +63,32 @@ import warnings
 import math
 import scipy.stats
 import scipy.interpolate
+import scipy.stats
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from io import StringIO
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_samples
+
+
+def ppoints(n, a=None):
+    """
+    Equidistant points in [0,1], to be used as arguments of the pdf or icdf of distributions.
+    Boundaries are excluded.
+    See the documentation of the corresponding R function for more details.
+
+    Inputs: n: integer, desired number of points
+            a: offset
+    Output: numpy array, with n equidistant points
+
+    Example:
+        ppoints(20)
+    """
+    if a is None:
+        a = .5 if n > 10 else 3/8
+    assert 0 <= a <= 1, f"the offset should be in [0,1], got {a}"
+    return np.linspace( 1-a, n-a, n ) / (n+1-2*a)
 
 
 def make_expectation_gh(n_nodes=200):
@@ -350,13 +370,14 @@ def generate_non_gaussian_data(
 
     return gen_with_true_SR0( nr, nc, configs[name], SR0 )
 
-
+@deprecated( reason = "No longer used" )
 def generate_autocorrelated_Gaussian_data( nr, nc, rho = .5 ): 
     X = np.random.normal( size = (nr, nc) )
     for i in range(1, nr): 
         X[i,:] = rho*X[i-1,:] + X[i,:]
     return X
 
+@deprecated( reason = "No longer used" )
 def enforce_marginals_1d( gaussian, marginals ): 
     assert gaussian.ndim == 1
     assert marginals.ndim == 1
@@ -371,6 +392,7 @@ def enforce_marginals_1d( gaussian, marginals ):
     assert np.all( np.argsort( gaussian ) == np.argsort( result ) )
     return result
 
+@deprecated( reason = "No longer used" )
 def enforce_marginals( gaussian, marginals ): 
     assert gaussian.ndim == 2
     assert marginals.ndim == 2
@@ -388,6 +410,7 @@ def autocorrelation( X ):
     return ac.mean()
 
 """
+@deprecated( reason = "No longer used" )    
 The mapping between gaussian and non-gaussian autocorrelations was obtained as follows: 
     N = 100_000
     values = []
@@ -484,6 +507,7 @@ severe,0.9,0.8656
 """
 values = pd.read_csv(StringIO(values))
 
+@deprecated( reason = "No longer used" )
 def compute_input_rho(name, rho_output):
     subset = values[values['name'] == name].sort_values('rho_output')
     x = subset['rho_output']
@@ -491,11 +515,30 @@ def compute_input_rho(name, rho_output):
     f = scipy.interpolate.interp1d(x, y, bounds_error=False, fill_value="extrapolate")
     return float(f(rho_output))
 
-def generate_autocorrelated_non_gaussian_data( N, n, SR0 = 0, name = "gaussian", rho = 0 ): 
-    rho_input = compute_input_rho( name, rho )
-    marginals = generate_non_gaussian_data( N, n, SR0 = SR0, name = name )
-    gaussian = generate_autocorrelated_Gaussian_data( N, n, rho = rho_input )
-    X = enforce_marginals( gaussian, marginals )
+
+def generate_autocorrelated_non_gaussian_data( N, n, SR0 = 0, name = "gaussian", rho = None, gaussian_autocorrelation = 0 ): 
+    if rho is None: 
+        #rho = compute_input_rho( name, gaussian_autocorrelation )
+        rho = gaussian_autocorrelation  # With the distributions we consider the autocorrelation is almost the same.
+
+    shape = (N,n)
+    
+    # Marginal distribution: ppf
+    R = 10_000
+    marginal = generate_non_gaussian_data( R, 1, SR0 = SR0, name = name )[:,0]
+    ppf = scipy.interpolate.interp1d( ppoints(R), sorted(marginal), fill_value="extrapolate" )
+
+    # AR(1) processes
+    X = np.random.normal( size = shape )
+    for i in range( 1, shape[0] ):
+        X[i,:] = rho*X[i-1,:] + np.sqrt(1-rho**2)*X[i,:]
+
+    # Convert the margins to uniform, with the Gaussian cdf
+    X = scipy.stats.norm.cdf( X )
+
+    # Convert the uniforms to the target margins, using the ppf
+    X = ppf( X )
+
     return X
 
 
