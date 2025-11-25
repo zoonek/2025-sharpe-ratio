@@ -1047,7 +1047,7 @@ def adjusted_p_values_holm(ps: np.ndarray, *, variant: str = 'bonferroni') -> np
 
 
 
-def FDR_critical_value( q, SR0, SR1, sigma0, sigma1, p_H1 ):
+def FDR_critical_value( q: float, SR0: float, SR1: float, sigma0: float, sigma1: float, p_H1: float ) -> float:
     """
     Given
         H ~ Bern(p₁)
@@ -1087,7 +1087,45 @@ def FDR_critical_value( q, SR0, SR1, sigma0, sigma1, p_H1 ):
         if f(-10) < q:  # Solution outside of the search interval
             return -np.inf
 
+        if ( f(-10) - q ) * ( f(10) - q ) > 0:  # No solution, for instance if σ₀≫σ₁ and q small
+            return np.nan
+
         return scipy.optimize.brentq( lambda c: f(c) - q, -10, 10 )
+
+
+def test_FDR_critical_value():
+    np.random.seed(0)   
+    r = []
+    for _ in range(100): 
+            
+        q = np.random.uniform()
+        mu0 = np.random.uniform()
+        mu1 = np.random.uniform()
+        mu0, mu1 = min(mu0, mu1), max(mu0, mu1)
+        sigma0 = np.random.uniform()
+        sigma1 = np.random.uniform()
+        p = np.random.uniform()
+
+        R = 100_000
+        H = np.random.uniform(size = R) < p
+        X0 = np.random.normal(mu0, sigma0, size = R)
+        X1 = np.random.normal(mu1, sigma1, size = R)
+        X = np.where( H, X1, X0 )    
+        c = FDR_critical_value( q, mu0, mu1, sigma0, sigma1, p )
+        r.append( { 
+            'q': q,
+            'mu0': mu0,
+            'mu1': mu1,
+            'sigma0': sigma0,
+            'sigma1': sigma1,
+            'p': p,
+            'c': c,
+            'FDP': np.sum( ( H == 0 ) & ( X > c ) ) / ( 1e-100 + np.sum( X > c ) ),
+        })
+    r = pd.DataFrame( r )
+    i = np.isfinite( r['c'] ) & (r['FDP'] > 0 )
+    assert np.abs( r['q'][i] - r['FDP'][i] ).mean() < 1e-2    
+    #plt.scatter( r['q'][i], r['FDP'][i] )  # Straight line
 
 
 def control_for_FDR( 
@@ -1281,5 +1319,6 @@ if __name__ == '__main__':
     test_oFDR()
     test_robust_covariance_inverse()
     test_minimum_variance_weights_for_correlated_assets()
+    test_FDR_critical_value
     test_numeric_example()
     print("All tests passed.")
