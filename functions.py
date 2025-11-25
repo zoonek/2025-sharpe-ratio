@@ -1139,22 +1139,12 @@ def control_for_FDR(
     gamma4: float = 3.,
     rho: float = 0.,
     K: int = 1,
-    # The other arguments are no longer used
-    grid_size: int = 10_000,
-    max_iterations: int = 1000,
-    epsilon: float = 1e-14,
 ) -> tuple[float, float, float, float]:
     """
     Compute the critical value to test for multiple Sharpe ratios, while controling the false discovery rate (FDR)
     
-    Return the solution (alpha, beta, SR_c) of
-        alpha = q / (1-q) * (1-p_H0) / p_H0 * (1-beta)
-        SR_c = SR0 + sigma_SR0 * Z_inv( 1 - alpha )
-        beta = Z( (SR_c - SR1 ) / sigma_SR1 )
-
-    We first use grid search to find an approximate solution, then do a few more iterations to have a more precise result.
-    (This is inefficient, but robust.)
-
+    See FDR_critical_value for the computations. 
+    
     Inputs:
     - q: float, FDR level
     - SR0: float, Sharpe ratio under H0
@@ -1167,7 +1157,7 @@ def control_for_FDR(
     - grid_size: int, number of points in the grid search
     - max_iterations: int, maximum number of fixed point iterations after the grid search
     - epsilon: float, tolerance for the fixed point iterations
-    - K: int, number of strategies whose Sharpe ratios we take the maximum of -- larger K means smaller variance
+    - K: int, number of strategies whose Sharpe ratios we take the maximum of -- larger K means smaller variance. Leave this to 1 for FDR control; use K>1 for FWER-FDR control.
     Outputs:
     - alpha: float, significance level, P[SR>SR_c|H0]
     - beta: float, type II error, P[SR<=SR_c|H1]; the power is 1-beta=P[SR>SR_c|H1]
@@ -1175,38 +1165,12 @@ def control_for_FDR(
     - q_hat: float, estimated FDR; should be close to q
     """
 
-    Z_inv = scipy.stats.norm.ppf
+    #Z_inv = scipy.stats.norm.ppf
     Z = scipy.stats.norm.cdf
 
     s0 = math.sqrt( sharpe_ratio_variance( SR0, T, gamma3=gamma3, gamma4=gamma4, rho=rho, K=K ) )
     s1 = math.sqrt( sharpe_ratio_variance( SR1, T, gamma3=gamma3, gamma4=gamma4, rho=rho, K=K ) )
-
-    if False:  # Old implementation (slow)
-            
-        def one_iteration( alpha, *, q, s0, s1, p_H1 = .05, T = 24 ):
-            SRc = SR0 + s0 * Z_inv( 1 - alpha )
-            beta = Z( (SRc - SR1 ) / s1 )
-            alpha = q/(1-q) * p_H1/(1-p_H1) * (1-beta)
-            return alpha, beta, SRc
-
-        # Grid search
-        xs = np.linspace( 0, 1, grid_size )[1:-1]
-        ys = [ one_iteration( alpha, q=q, s0=s0, s1=s1, p_H1=p_H1, T=T )[0] for alpha in xs ]
-        alpha = xs[ np.argmin( np.abs( xs - ys ) ) ]
-
-        previous_alpha = previous_beta = previous_SRc = np.inf
-        for _ in range(max_iterations):
-            alpha, beta, SRc = one_iteration( alpha, q=q, s0=s0, s1=s1, p_H1=p_H1, T=T )
-            error = np.abs(alpha - previous_alpha) + np.abs(beta - previous_beta) + np.abs(SRc - previous_SRc)
-            if np.isnan(error) or ( error < epsilon ): 
-                break
-            previous_alpha = alpha
-            previous_beta = beta
-            previous_SRc = SRc
-        assert np.isnan(error) or ( error < epsilon ), f"Error: {error:.3g} > {epsilon:.3g}"
-
-    else: 
-        SRc = FDR_critical_value( q, SR0, SR1, s0, s1, p_H1 )
+    SRc = FDR_critical_value( q, SR0, SR1, s0, s1, p_H1 )
 
     beta = Z( (SRc - SR1 ) / s1 )
     alpha = q/(1-q) * p_H1/(1-p_H1) * (1-beta)
