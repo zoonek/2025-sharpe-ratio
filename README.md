@@ -1,4 +1,4 @@
-# Code for the paper *How to use the Sharpe ratio*
+# Code for the paper *[Sharpe Ratio Inference: A New Standard for Reporting and Decision-Making](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5520741)*
 
 Generate the figures from the paper as follows: 
 
