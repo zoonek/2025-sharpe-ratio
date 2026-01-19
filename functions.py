@@ -263,7 +263,7 @@ def number_of_clusters(
             kmeans.fit(D)  # Use the distances as features, i.e., compute distances between columns of the distance matrix
             labels = kmeans.labels_
             silhouette_vals = silhouette_samples(D, labels)
-            q = silhouette_vals.mean() / silhouette_vals.std()
+            q = silhouette_vals.mean() / silhouette_vals.std(ddof=1)
             if q > qualities[k]:
                 qualities[k] = max(qualities[k], q)
                 clusters[k] = labels
@@ -382,7 +382,6 @@ def enforce_marginals_1d( gaussian, marginals ):
     assert gaussian.ndim == 1
     assert marginals.ndim == 1
     assert gaussian.shape == marginals.shape
-    i = np.argsort( gaussian )
     i = np.argsort( gaussian )
     j = np.argsort( marginals )
     ii = np.argsort( i )
@@ -943,12 +942,12 @@ def deflated_sharpe_ratio(X: np.ndarray, *, verbose: bool = False, cluster: bool
     else:
 
         number_of_trials = X.shape[1]
-        SRs = X.mean(axis=0) / X.std(axis=0)
-        variance = np.var( SRs )
+        SRs = X.mean(axis=0) / X.std(axis=0, ddof=1)
+        variance = np.var( SRs, ddof=1 )
 
         ps = np.array( [
             1 - probabilistic_sharpe_ratio(
-                X[:,i].mean() / X[:,i].std(),
+                X[:,i].mean() / X[:,i].std(ddof=1),
                 SR0 = 0,
                 T = X.shape[0],
                 gamma3 = scipy.stats.skew( X[:,i] ),                     # TODO: Should we use the pooled values of gamma3 and gamma4?
@@ -968,7 +967,7 @@ def deflated_sharpe_ratio(X: np.ndarray, *, verbose: bool = False, cluster: bool
         print( f"Var[ SR ]         = {math.sqrt(variance):.3f}²" )
         print( f"SR0 = E[ max SR ] = {SR0:.3f}" )
         print( f"max SR            = {SRs.max():.3f}" )
-        print( f"max SR  (raw)     = {np.max( X.mean(axis=0) / X.std(axis=0) ):.3f}" )
+        print( f"max SR  (raw)     = {np.max( X.mean(axis=0) / X.std(axis=0, ddof=1) ):.3f}" )
         print( f"DSR               = {DSR:.3f}" )
         print( f"1 - DSR           = {1-DSR:.3f} {'***' if DSR>.999 else '**' if DSR>.99 else '*' if DSR>.95 else '.' if DSR>.9 else ''}" )
         print( f"min p             = {ps.min():.3f}" )
@@ -985,7 +984,7 @@ def deflated_sharpe_ratio(X: np.ndarray, *, verbose: bool = False, cluster: bool
             "Var[ SR ]": math.sqrt(variance),
             "SR0 = E[ max SR ]": SR0,
             "max SR": SRs.max(),
-            "max SR (raw)": np.max( X.mean(axis=0) / X.std(axis=0) ),
+            "max SR (raw)": np.max( X.mean(axis=0) / X.std(axis=0, ddof=1) ),
             "DSR": DSR,
             "1 - DSR": 1-DSR,
             "min p": ps.min(),
@@ -1283,6 +1282,6 @@ if __name__ == '__main__':
     test_oFDR()
     test_robust_covariance_inverse()
     test_minimum_variance_weights_for_correlated_assets()
-    test_FDR_critical_value
+    test_FDR_critical_value()
     test_numeric_example()
     print("All tests passed.")
